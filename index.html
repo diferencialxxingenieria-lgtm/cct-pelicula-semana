@@ -1,37 +1,531 @@
-
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCT - Club Cinéfilo de Torrellano</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
-    <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #0f172a;
-            color: #f1f5f9;
-        }
-        .font-bebas {
-            font-family: 'Bebas Neue', cursive;
-        }
-    </style>
-<script type="importmap">
-{
-  "imports": {
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
-    "@google/genai": "https://esm.sh/@google/genai@^1.35.0",
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CCT – Película de la Semana</title>
+  <style>
+    :root { font-family: Arial, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    body { margin: 0; background:#fff; color:#111; }
+    .wrap { max-width: 1050px; margin: 0 auto; padding: 16px; }
+    header { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    h1 { font-size: 20px; margin:0; }
+    .pill { border:1px solid #ddd; border-radius:999px; padding:6px 10px; background:#fff; cursor:pointer; }
+    .pill.active { background:#f2f2f2; }
+    .btn { border:1px solid #ccc; border-radius:10px; padding:8px 12px; background:#fff; cursor:pointer; }
+    .btn.primary { border-color:#111; }
+    .btn:disabled { opacity:.6; cursor:not-allowed; }
+    .muted { color:#666; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top:12px; }
+    input[type="text"], select {
+      padding: 10px 12px; border: 1px solid #ccc; border-radius: 10px; min-width: 220px;
+    }
+    .genres { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px,1fr)); gap:12px; margin-top:14px; }
+    .card {
+      border:1px solid #e0e0e0; border-radius:14px; padding:12px; cursor:pointer;
+      transition: transform .06s ease;
+    }
+    .card:hover { transform: translateY(-1px); }
+    .title { font-weight:700; font-size:16px; line-height:1.25; }
+    .meta { margin-top:6px; color:#666; font-size:13px; }
+    .meta small { color:#999; }
+    .tag { display:inline-block; margin-top:6px; font-size:12px; color:#444; background:#f7f7f7; border:1px solid #eee; padding:3px 8px; border-radius:999px; }
+    .hr { border-top:1px solid #eee; margin:14px 0; }
+    .panel {
+      border:1px solid #e0e0e0; border-radius:14px; padding:14px; margin-top:14px;
+      background:#fff;
+    }
+    .panel h2 { margin:0 0 8px 0; font-size:18px; }
+    .pre {
+      white-space:pre-wrap; background:#fafafa; border:1px solid #eee; border-radius:12px;
+      padding:12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size:12px; color:#222;
+    }
+    footer { margin-top:18px; font-size:12px; color:#888; }
+  </style>
 </head>
+
 <body>
-    <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
+  <div class="wrap">
+    <header>
+      <h1>CCT – Película de la Semana</h1>
+
+      <label class="btn primary" style="display:inline-flex; align-items:center; gap:8px;">
+        <span>Subir _chat.txt</span>
+        <input id="file" type="file" accept=".txt,text/plain" style="display:none" />
+      </label>
+
+      <button id="clear" class="btn" disabled>Limpiar</button>
+      <span id="status" class="muted">Sube el TXT para empezar.</span>
+    </header>
+
+    <div class="row">
+      <input id="q" type="text" placeholder="Buscar por título…" disabled />
+      <select id="author" disabled>
+        <option value="">Todos los autores</option>
+      </select>
+      <button id="resetFilters" class="btn" disabled>Reset filtros</button>
+    </div>
+
+    <div id="genres" class="genres"></div>
+
+    <div class="hr"></div>
+
+    <div id="content"></div>
+
+    <footer>
+      *Esto procesa el TXT en tu navegador. No se sube a ningún servidor.
+      Si una peli no tiene enlace Filmaffinity en el chat, se abrirá una búsqueda en Filmaffinity por “Título + Año”.
+    </footer>
+  </div>
+
+<script>
+/* ==============================
+   PARSER WhatsApp + extracción
+   ============================== */
+
+const GENRE_CANON = [
+  "Terror","Thriller","Comedia","Drama","Acción","Aventura","Sci-Fi","Fantasía","Romance",
+  "Animación","Documental","Bélica","Crimen","Misterio"
+];
+
+const GENRE_KEYWORDS = [
+  { re: /\bterror\b|\bhorror\b/i, val: "Terror" },
+  { re: /\bthriller\b/i, val: "Thriller" },
+  { re: /\bcomedia\b|\bhumor\b/i, val: "Comedia" },
+  { re: /\bdrama\b/i, val: "Drama" },
+  { re: /\bacci[oó]n\b|\baction\b/i, val: "Acción" },
+  { re: /\baventura\b|\badventure\b/i, val: "Aventura" },
+  { re: /\bsci[\s-]?fi\b|\bciencia ficci[oó]n\b|\bscience fiction\b/i, val: "Sci-Fi" },
+  { re: /\bfantas[ií]a\b|\bfantasy\b/i, val: "Fantasía" },
+  { re: /\bromance\b|\brom[aá]ntic[oa]\b/i, val: "Romance" },
+  { re: /\banimaci[oó]n\b|\banimation\b/i, val: "Animación" },
+  { re: /\bdocumental\b|\bdocumentary\b/i, val: "Documental" },
+  { re: /\bb[eé]lic[ao]\b|\bguerra\b|\bwar\b/i, val: "Bélica" },
+  { re: /\bcrimen\b|\bcrime\b/i, val: "Crimen" },
+  { re: /\bmisterio\b|\bmystery\b/i, val: "Misterio" },
+];
+
+const HEADER_RE = /^\[(\d{1,2}\/\d{1,2}\/\d{2}),\s*(\d{1,2}:\d{2}:\d{2})\]\s*([^:]+):\s*(.*)$/;
+const FILMAFFINITY_RE = /(https?:\/\/(?:www\.)?filmaffinity\.com\/es\/film\d+\.html)/ig;
+
+function toISO(ddmmyy, hhmmss) {
+  const [dd, mm, yy] = ddmmyy.split("/").map(x => parseInt(x,10));
+  const [h, m, s] = hhmmss.split(":").map(x => parseInt(x,10));
+  const fullYear = yy < 70 ? 2000 + yy : 1900 + yy;
+  const d = new Date(fullYear, (mm||1)-1, dd||1, h||0, m||0, s||0);
+  return d.toISOString();
+}
+
+function clean(s){ return (s||"").replace(/\u200e|\u200f/g,"").trim(); }
+
+function isAnchor(text){
+  const t = (text||"").toLowerCase();
+  return (
+    t.includes("#pelicula_semana") ||
+    t.includes("película de la semana") ||
+    t.includes("pelicula de la semana") ||
+    t.includes("peli de la semana") ||
+    t.includes("pelis de la semana") ||
+    t.includes("película semanal") ||
+    t.includes("pelicula semanal") ||
+    t.includes("película de esta semana") ||
+    t.includes("pelicula de esta semana") ||
+    t.includes("película de la semana #") ||
+    t.includes("pelicula de la semana #") ||
+    t.includes("película de la semana 7") || // tolerante (hay textos tipo "Película de la semana 7.5")
+    t.includes("película de la semana 8")
+  );
+}
+
+function parseWhatsApp(txt){
+  const lines = txt.split(/\r?\n/);
+  const msgs = [];
+  let current = null;
+
+  for (const raw of lines) {
+    const m = raw.match(HEADER_RE);
+    if (m) {
+      const [, ddmmyy, hhmmss, author, rest] = m;
+      current = {
+        proposer: clean(author),
+        timestampISO: toISO(ddmmyy, hhmmss),
+        text: rest || ""
+      };
+      msgs.push(current);
+    } else {
+      // Continuación multi-línea (muy común)
+      if (current) current.text += "\n" + raw;
+    }
+  }
+  return msgs;
+}
+
+function extractField(blockText, field){
+  // field: "Título" "Titulo" "Nombre" "Año" "Ano" "Géneros" "Generos" "Género" "Genero"
+  const re = new RegExp(field + "\\s*:\\s*(.+)", "i");
+  const m = blockText.match(re);
+  return m ? clean(m[1]) : null;
+}
+
+function extractYear(blockText){
+  const m = blockText.match(/\b(19\d{2}|20\d{2})\b/);
+  return m ? parseInt(m[1],10) : null;
+}
+
+function mapGenre(g){
+  const s = clean(g);
+  for (const it of GENRE_KEYWORDS) if (it.re.test(s)) return it.val;
+  const hit = GENRE_CANON.find(x => x.toLowerCase() === s.toLowerCase());
+  return hit || null;
+}
+
+function splitGenres(raw){
+  const parts = raw.split(/[,/|·•]+/g).map(clean).filter(Boolean);
+  const out = [];
+  for (const p of parts) out.push(mapGenre(p) || p);
+  return Array.from(new Set(out));
+}
+
+function extractGenres(blockText){
+  const raw = extractField(blockText, "Géneros") ||
+              extractField(blockText, "Generos") ||
+              extractField(blockText, "Género")  ||
+              extractField(blockText, "Genero");
+  if (raw) return splitGenres(raw);
+
+  // Heurística: keywords sueltas
+  const found = [];
+  for (const it of GENRE_KEYWORDS) if (it.re.test(blockText)) found.push(it.val);
+  return Array.from(new Set(found));
+}
+
+function extractFilmaffinityUrl(blockText){
+  const m = blockText.match(FILMAFFINITY_RE);
+  return m && m[0] ? m[0] : null;
+}
+
+function isBadTitleLine(line){
+  const l = line.toLowerCase();
+  if (!line) return true;
+  if (l.includes("#pelicula_semana")) return true;
+  if (l.includes("película de la semana") || l.includes("pelicula de la semana") || l.includes("peli de la semana")) return true;
+  if (l.startsWith("año:") || l.startsWith("ano:")) return true;
+  if (l.startsWith("género:") || l.startsWith("genero:") || l.startsWith("géneros:") || l.startsWith("generos:")) return true;
+  if (l.startsWith("título:") || l.startsWith("titulo:") || l.startsWith("nombre:")) return true;
+  if (/^(19\d{2}|20\d{2})$/.test(line)) return true;
+  if (line.length < 2) return true;
+  return false;
+}
+
+function pickTitle(blockText){
+  // Prioridad: campos
+  const t = extractField(blockText, "Título") || extractField(blockText, "Titulo") || extractField(blockText, "Nombre");
+  if (t) return clean(t).replace(/\s+/g," ");
+
+  // Si no hay campos: toma la primera línea razonable del bloque
+  const lines = blockText.split("\n").map(clean).filter(Boolean);
+  for (const ln of lines) {
+    const cand = clean(ln).replace(/^[-–—•]+/,"").trim();
+    if (!isBadTitleLine(cand)) return cand.replace(/\s+/g," ");
+  }
+  return null;
+}
+
+function filmaffinitySearchUrl(title, year){
+  const q = year ? `${title} ${year}` : title;
+  return `https://www.filmaffinity.com/es/search.php?stext=${encodeURIComponent(q)}&stype=all`;
+}
+
+function extractMoviePicks(txt){
+  const msgs = parseWhatsApp(txt);
+  const picks = [];
+  for (let i=0;i<msgs.length;i++){
+    const msg = msgs[i];
+    if (!isAnchor(msg.text)) continue;
+
+    // bloque = mensaje actual + siguientes 3 (tolerante para formato antiguo)
+    const blockMsgs = [msg, msgs[i+1], msgs[i+2], msgs[i+3]].filter(Boolean);
+    const blockText = blockMsgs.map(m => m.text).join("\n");
+
+    const title = pickTitle(blockText);
+    if (!title) continue;
+
+    const year = extractYear(blockText); // puede ser null en histórico
+    const genres = extractGenres(blockText);
+    const fa = extractFilmaffinityUrl(blockText);
+
+    const id = `${title.toLowerCase()}__${year||"na"}__${msg.timestampISO}`.replace(/\s+/g,"_");
+
+    picks.push({
+      id,
+      title,
+      year,
+      genres,
+      proposer: msg.proposer,
+      timestampISO: msg.timestampISO,
+      filmaffinityUrl: fa,
+      sourceSnippet: blockText.slice(0, 450)
+    });
+  }
+
+  // dedup por (title+year)
+  const seen = new Set();
+  const out = [];
+  for (const p of picks){
+    const key = `${p.title.toLowerCase()}__${p.year||"na"}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+
+  // orden más reciente primero
+  out.sort((a,b)=> a.timestampISO < b.timestampISO ? 1 : -1);
+  return out;
+}
+
+/* ==============================
+   UI state + render
+   ============================== */
+
+let STATE = {
+  raw: "",
+  movies: [],
+  query: "",
+  author: "",
+  genresSelected: new Set(),
+  view: "list",  // "list" | "detail"
+  selectedId: null
+};
+
+const elFile = document.getElementById("file");
+const elClear = document.getElementById("clear");
+const elStatus = document.getElementById("status");
+const elQ = document.getElementById("q");
+const elAuthor = document.getElementById("author");
+const elGenres = document.getElementById("genres");
+const elContent = document.getElementById("content");
+const elResetFilters = document.getElementById("resetFilters");
+
+function setEnabled(on){
+  elClear.disabled = !on;
+  elQ.disabled = !on;
+  elAuthor.disabled = !on;
+  elResetFilters.disabled = !on;
+}
+
+function uniqueAuthors(movies){
+  const s = new Set(movies.map(m=>m.proposer).filter(Boolean));
+  return Array.from(s).sort((a,b)=>a.localeCompare(b));
+}
+
+function uniqueGenres(movies){
+  const s = new Set();
+  movies.forEach(m => (m.genres||[]).forEach(g => s.add(g)));
+  const arr = Array.from(s);
+
+  // prioriza canon (si existe)
+  const canonFirst = GENRE_CANON.filter(g => s.has(g));
+  const rest = arr.filter(g => !GENRE_CANON.includes(g)).sort((a,b)=>a.localeCompare(b));
+  return [...canonFirst, ...rest];
+}
+
+function renderAuthorSelect(){
+  const authors = uniqueAuthors(STATE.movies);
+  const opts = [`<option value="">Todos los autores</option>`]
+    .concat(authors.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`));
+  elAuthor.innerHTML = opts.join("");
+  elAuthor.value = STATE.author;
+}
+
+function renderGenres(){
+  const genres = uniqueGenres(STATE.movies);
+  if (!genres.length){ elGenres.innerHTML = ""; return; }
+
+  const btns = genres.map(g => {
+    const active = STATE.genresSelected.has(g);
+    return `<button class="pill ${active ? "active":""}" data-genre="${escapeAttr(g)}">${escapeHtml(g)}</button>`;
+  });
+
+  elGenres.innerHTML = btns.join("");
+  elGenres.querySelectorAll("button[data-genre]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const g = btn.getAttribute("data-genre");
+      if (!g) return;
+      if (STATE.genresSelected.has(g)) STATE.genresSelected.delete(g);
+      else STATE.genresSelected.add(g);
+      render();
+    });
+  });
+}
+
+function filteredMovies(){
+  const q = STATE.query.trim().toLowerCase();
+  const auth = STATE.author;
+  const genres = Array.from(STATE.genresSelected).map(x=>x.toLowerCase());
+
+  return STATE.movies.filter(m=>{
+    const okQ = !q || (m.title||"").toLowerCase().includes(q);
+    const okA = !auth || m.proposer === auth;
+    const mg = (m.genres||[]).map(x=>String(x).toLowerCase());
+    const okG = genres.length===0 || genres.every(g => mg.includes(g));
+    return okQ && okA && okG;
+  });
+}
+
+function renderList(){
+  const list = filteredMovies();
+  if (!STATE.movies.length){
+    elContent.innerHTML = `<div class="muted">Sube el archivo TXT exportado de WhatsApp.</div>`;
+    return;
+  }
+
+  if (!list.length){
+    elContent.innerHTML = `<div class="muted">No hay resultados con esos filtros.</div>`;
+    return;
+  }
+
+  const cards = list.map(m=>{
+    const date = new Date(m.timestampISO).toLocaleString();
+    const genres = (m.genres && m.genres.length) ? m.genres.join(", ") : "Sin géneros";
+    const year = m.year ? ` (${m.year})` : "";
+    return `
+      <div class="card" data-id="${escapeAttr(m.id)}">
+        <div class="title">${escapeHtml(m.title)}${escapeHtml(year)}</div>
+        <div class="meta">${escapeHtml(genres)}</div>
+        <div class="meta">Propuesta por <b>${escapeHtml(m.proposer || "—")}</b></div>
+        <div class="meta"><small>${escapeHtml(date)}</small></div>
+      </div>
+    `;
+  }).join("");
+
+  elContent.innerHTML = `<div class="grid">${cards}</div>`;
+
+  elContent.querySelectorAll(".card[data-id]").forEach(card=>{
+    card.addEventListener("click", ()=>{
+      const id = card.getAttribute("data-id");
+      STATE.view = "detail";
+      STATE.selectedId = id;
+      render();
+    });
+  });
+}
+
+function renderDetail(){
+  const m = STATE.movies.find(x=>x.id===STATE.selectedId);
+  if (!m){
+    STATE.view="list"; STATE.selectedId=null; render(); return;
+  }
+
+  const genres = (m.genres && m.genres.length) ? m.genres.join(", ") : "—";
+  const date = new Date(m.timestampISO).toLocaleString();
+  const fa = m.filmaffinityUrl || filmaffinitySearchUrl(m.title, m.year);
+
+  elContent.innerHTML = `
+    <div class="panel">
+      <button class="btn" id="back">← Volver</button>
+      <h2>${escapeHtml(m.title)}${m.year ? ` (${m.year})` : ""}</h2>
+      <div class="meta"><b>Géneros:</b> ${escapeHtml(genres)}</div>
+      <div class="meta"><b>Propuesta por:</b> ${escapeHtml(m.proposer || "—")}</div>
+      <div class="meta"><b>Fecha:</b> ${escapeHtml(date)}</div>
+
+      <div class="row" style="margin-top:12px;">
+        <button class="btn primary" id="openFA">Abrir en Filmaffinity</button>
+        <span class="muted">${m.filmaffinityUrl ? "Enlace directo detectado en el chat" : "Se abrirá búsqueda en Filmaffinity"}</span>
+      </div>
+
+      <details style="margin-top:12px;">
+        <summary>Debug (fragmento detectado)</summary>
+        <div class="pre">${escapeHtml(m.sourceSnippet || "")}</div>
+      </details>
+    </div>
+  `;
+
+  document.getElementById("back").addEventListener("click", ()=>{
+    STATE.view="list"; STATE.selectedId=null; render();
+  });
+
+  document.getElementById("openFA").addEventListener("click", ()=>{
+    window.open(fa, "_blank", "noopener,noreferrer");
+  });
+}
+
+function render(){
+  setEnabled(STATE.movies.length > 0);
+  elStatus.textContent = STATE.movies.length
+    ? `${STATE.movies.length} películas detectadas`
+    : "Sube el TXT para empezar.";
+
+  renderAuthorSelect();
+  renderGenres();
+
+  if (STATE.view === "detail") renderDetail();
+  else renderList();
+}
+
+function escapeHtml(s){
+  return String(s ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+function escapeAttr(s){ return escapeHtml(s).replaceAll("\n"," "); }
+
+/* ==============================
+   Eventos
+   ============================== */
+
+elFile.addEventListener("change", async (e)=>{
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  const text = await f.text();
+
+  STATE.raw = text;
+  STATE.movies = extractMoviePicks(text);
+  STATE.view = "list";
+  STATE.selectedId = null;
+  STATE.query = "";
+  STATE.author = "";
+  STATE.genresSelected = new Set();
+
+  elQ.value = "";
+  elAuthor.value = "";
+  render();
+});
+
+elClear.addEventListener("click", ()=>{
+  STATE = { raw:"", movies:[], query:"", author:"", genresSelected:new Set(), view:"list", selectedId:null };
+  elFile.value = "";
+  elQ.value = "";
+  elAuthor.innerHTML = `<option value="">Todos los autores</option>`;
+  elGenres.innerHTML = "";
+  render();
+});
+
+elQ.addEventListener("input", ()=>{
+  STATE.query = elQ.value || "";
+  render();
+});
+
+elAuthor.addEventListener("change", ()=>{
+  STATE.author = elAuthor.value || "";
+  render();
+});
+
+elResetFilters.addEventListener("click", ()=>{
+  STATE.query = "";
+  STATE.author = "";
+  STATE.genresSelected = new Set();
+  elQ.value = "";
+  elAuthor.value = "";
+  render();
+});
+
+// Render inicial
+render();
+</script>
 </body>
 </html>
